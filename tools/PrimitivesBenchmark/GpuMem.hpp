@@ -3,19 +3,28 @@
 
 typedef enum
 {
-    MEM_COARSE     = 0, // Standard coarse-grained device memory
-    MEM_FINE       = 1, // Fine-grained device memory (bypasses caching)
-    NUM_MEM_TYPES  = 2
+    MEM_COARSE     = 0,  // Standard coarse-grained device memory
+    MEM_FINE       = 1,  // Fine-grained device memory (bypasses caching)
+    NUM_MEM_TYPES  = 2,
+    MEM_UNUSED     = 2, // Un-used
 } MemTypeEnum;
 
-char const memTypeNames[2][3] = {"CG", "FG"};
+typedef enum
+{
+    GPU1 = 0,
+    GPU2 = 1
+} GpuIdEnum;
+
+char const memTypeNames[3][3] = {"CG", "FG", "  "};
 
 typedef struct
 {
-    int numBytes;                 // # of bytes per array
-    int N;                        // Number of floats per array
-    float* src[2][NUM_MEM_TYPES]; // Source buffers
-    float* dst[2][NUM_MEM_TYPES]; // Destination buffers
+    int numBytes;                  // # of bytes per array
+    int N;                         // Number of floats per array
+    float* src1[2][NUM_MEM_TYPES]; // Source buffers
+    float* src2[2][NUM_MEM_TYPES]; // Source buffers
+    float* dst1[2][NUM_MEM_TYPES]; // Destination buffers
+    float* dst2[2][NUM_MEM_TYPES]; // Destination buffers
 } GpuMem;
 
 // Fills or validates the contents of an array
@@ -42,8 +51,10 @@ void ClearOutputs(ConfigParams const& config, GpuMem const& gpuMem)
     for (int i = 0; i < 2; i++)
     {
         HIP_CALL(hipSetDevice(config.deviceId[i]));
-        HIP_CALL(hipMemset(gpuMem.dst[i][MEM_COARSE], 0, gpuMem.numBytes));
-        HIP_CALL(hipMemset(gpuMem.dst[i][MEM_FINE], 0, gpuMem.numBytes));
+        HIP_CALL(hipMemset(gpuMem.dst1[i][MEM_COARSE], 0, gpuMem.numBytes));
+        HIP_CALL(hipMemset(gpuMem.dst1[i][MEM_FINE], 0, gpuMem.numBytes));
+        HIP_CALL(hipMemset(gpuMem.dst2[i][MEM_COARSE], 0, gpuMem.numBytes));
+        HIP_CALL(hipMemset(gpuMem.dst2[i][MEM_FINE], 0, gpuMem.numBytes));
     }
 }
 
@@ -73,16 +84,25 @@ void PrepareGpuMem(ConfigParams const& config, GpuMem& gpuMem, int const numByte
         }
 
         // Allocate GPU resources (streams + memory buffers)
-        HIP_CALL(hipMalloc((void**)&gpuMem.src[i][MEM_COARSE], numBytes));
-        HIP_CALL(hipMalloc((void**)&gpuMem.dst[i][MEM_COARSE], numBytes));
-        HIP_CALL(hipExtMallocWithFlags((void**)&gpuMem.src[i][MEM_FINE], numBytes,
+        HIP_CALL(hipMalloc((void**)&gpuMem.src1[i][MEM_COARSE], numBytes));
+        HIP_CALL(hipMalloc((void**)&gpuMem.src2[i][MEM_COARSE], numBytes));
+        HIP_CALL(hipMalloc((void**)&gpuMem.dst1[i][MEM_COARSE], numBytes));
+        HIP_CALL(hipMalloc((void**)&gpuMem.dst2[i][MEM_COARSE], numBytes));
+
+        HIP_CALL(hipExtMallocWithFlags((void**)&gpuMem.src1[i][MEM_FINE], numBytes,
                                        hipDeviceMallocFinegrained));
-        HIP_CALL(hipExtMallocWithFlags((void**)&gpuMem.dst[i][MEM_FINE], numBytes,
+        HIP_CALL(hipExtMallocWithFlags((void**)&gpuMem.src2[i][MEM_FINE], numBytes,
+                                       hipDeviceMallocFinegrained));
+        HIP_CALL(hipExtMallocWithFlags((void**)&gpuMem.dst1[i][MEM_FINE], numBytes,
+                                       hipDeviceMallocFinegrained));
+        HIP_CALL(hipExtMallocWithFlags((void**)&gpuMem.dst2[i][MEM_FINE], numBytes,
                                        hipDeviceMallocFinegrained));
 
         // Fill the source data array with a pattern
-        FillArrayWithPattern(gpuMem.N, gpuMem.src[i][MEM_COARSE]);
-        FillArrayWithPattern(gpuMem.N, gpuMem.src[i][MEM_FINE]);
+        FillArrayWithPattern(gpuMem.N, gpuMem.src1[i][MEM_COARSE]);
+        FillArrayWithPattern(gpuMem.N, gpuMem.src2[i][MEM_COARSE]);
+        FillArrayWithPattern(gpuMem.N, gpuMem.src1[i][MEM_FINE]);
+        FillArrayWithPattern(gpuMem.N, gpuMem.src2[i][MEM_FINE]);
     }
 }
 
@@ -91,10 +111,14 @@ void ReleaseGpuMem(GpuMem &gpuMem)
 {
     for (int i = 0; i < 2; i++)
     {
-        HIP_CALL(hipFree(gpuMem.src[i][MEM_COARSE]));
-        HIP_CALL(hipFree(gpuMem.src[i][MEM_FINE]));
-        HIP_CALL(hipFree(gpuMem.dst[i][MEM_COARSE]));
-        HIP_CALL(hipFree(gpuMem.dst[i][MEM_FINE]));
+        HIP_CALL(hipFree(gpuMem.src1[i][MEM_COARSE]));
+        HIP_CALL(hipFree(gpuMem.src1[i][MEM_FINE]));
+        HIP_CALL(hipFree(gpuMem.src2[i][MEM_COARSE]));
+        HIP_CALL(hipFree(gpuMem.src2[i][MEM_FINE]));
+        HIP_CALL(hipFree(gpuMem.dst1[i][MEM_COARSE]));
+        HIP_CALL(hipFree(gpuMem.dst1[i][MEM_FINE]));
+        HIP_CALL(hipFree(gpuMem.dst2[i][MEM_COARSE]));
+        HIP_CALL(hipFree(gpuMem.dst2[i][MEM_FINE]));
     }
 }
 
