@@ -4,16 +4,7 @@
                 wr = LOAD(&(devProf->wait_recv_cycle[blockIdx.x])); }
 
 #define ACCUMULATE_COUNTER(prim) \
-//  if (tid==0) { __atomic_fetch_add(&(devProf->prim##_cycle), clock64() - t0 \
-  if (tid==0) { __atomic_fetch_add(&(devProf->prim##_cycle), 1.0f \
-                                   + ws - LOAD(&(devProf->wait_send_cycle[blockIdx.x])) \
-                                   + wr - LOAD(&(devProf->wait_recv_cycle[blockIdx.x])), \
-                                   __ATOMIC_SEQ_CST);                   \
-    __atomic_fetch_add(&(devProf->prim##_byte), nelem * sizeof(T), __ATOMIC_SEQ_CST); }
-
-#define ACCUMULATE_COUNTER(prim) \
-//  if (tid==0) { __atomic_fetch_add(&(devProf->prim##_cycle), clock64() - t0 \
-  if (tid==0) { __atomic_fetch_add(&(devProf->prim##_cycle), 1.0f \
+  if (tid==0) { __atomic_fetch_add(&(devProf->prim##_cycle), clock64() - t0 \
                                    + ws - LOAD(&(devProf->wait_send_cycle[blockIdx.x])) \
                                    + wr - LOAD(&(devProf->wait_recv_cycle[blockIdx.x])), \
                                    __ATOMIC_SEQ_CST);                   \
@@ -119,7 +110,6 @@
 
 #ifdef ENABLE_PROFILING
 
-//     __atomic_fetch_add(&devProf->wait_send_cycle[blockIdx.x], clock64() - t0, __ATOMIC_SEQ_CST);
 #define WAITSEND(i)                                                     \
   {                                                                     \
     spins = 0;                                                          \
@@ -133,29 +123,9 @@
         CHECKABORT(sendConn[i]->opCountRem);                            \
         if (abort) break;                                               \
       }                                                                 \
-      __atomic_fetch_add(&devProf->wait_send_cycle[blockIdx.x], 1.0f, __ATOMIC_SEQ_CST); \
+      __atomic_fetch_add(&devProf->wait_send_cycle[blockIdx.x], clock64() - t0, __ATOMIC_SEQ_CST); \
     }                                                                   \
   }
-
-#else
-
-#define WAITSEND(i)                                         \
-  {                                                         \
-    spins = 0;                                              \
-    mismatch = 0;                                           \
-    sendStep[i] += SLICESTEPS;                              \
-    if (tid == WARP_SIZE+i) {                               \
-      while (sendConnHead[i] + NCCL_STEPS < sendStep[i]) {  \
-        sendConnHead[i] = LOAD(waitPtr);                    \
-        CHECKABORT(sendConn[i]->opCountRem);                \
-        if (abort) break;                                   \
-      }                                                     \
-    }                                                       \
-  }
-
-#endif
-
-#ifdef ENABLE_PROFILING
 
 #define WAITRECV(i)                                                     \
   {                                                                     \
@@ -169,12 +139,26 @@
         CHECKABORT(recvConn[i]->opCountRem);                            \
         if (abort) break;                                               \
       }                                                                 \
-      __atomic_fetch_add(&devProf->wait_recv_cycle[blockIdx.x], 1.0f, __ATOMIC_SEQ_CST); \
+      __atomic_fetch_add(&devProf->wait_recv_cycle[blockIdx.x], clock64() - t0, __ATOMIC_SEQ_CST); \
     }                                                                   \
   }
-//      __atomic_fetch_add(&devProf->wait_recv_cycle[blockIdx.x], clock64() - t0, __ATOMIC_SEQ_CST); \
+
 
 #else
+
+#define WAITSEND(i)                                                     \
+  {                                                                     \
+    spins = 0;                                                          \
+    mismatch = 0;                                                       \
+    sendStep[i] += SLICESTEPS;                                          \
+    if (tid == WARP_SIZE+i) {                                           \
+      while (sendConnHead[i] + NCCL_STEPS < sendStep[i]) {              \
+        sendConnHead[i] = LOAD(waitPtr);                                \
+        CHECKABORT(sendConn[i]->opCountRem);                            \
+        if (abort) break;                                               \
+      }                                                                 \
+    }                                                                   \
+  }
 
 #define WAITRECV(i)                                       \
   {                                                       \
@@ -183,7 +167,7 @@
     recvStep[i] += SLICESTEPS;                            \
     if (tid == i) {                                       \
       while (LOAD(waitPtr) < recvStep[i]) {               \
-        CHECKABORT(recvConn[i]->opCountRem) break;        \
+        CHECKABORT(recvConn[i]->opCountRem);              \
         if (abort) break;                                 \
       }                                                   \
     }                                                     \
@@ -256,6 +240,12 @@
           ReduceOrCopyMulti<UNROLL, FUNC, T, RECV+SRC, RECV*NRECV+SRC, SEND+DST, SEND*NSEND+DST>(tid, nthreads, RECV*nrecv+SRC, srcs, SEND*nsend+DST, dsts, realSize); \
         }                                                               \
       }                                                                 \
+      if (abort) __atomic_fetch_add(abortCount, 1, __ATOMIC_SEQ_CST);   \
+      __syncthreads();                                                  \
+      if (LOAD(abortCount)) {                                           \
+        asm volatile ("s_endpgm");                                      \
+        /*return; */                                                    \
+      }                                                                 \
       /*exitIfAbortBarrier(abort, abortCount);*/                        \
       if (tid == 0) {                                                   \
         /*FOR_SEND(postSendSize, realSize*sizeof(T));*/                 \
@@ -310,9 +300,11 @@ __device__ void ncclAllReduceRingKernel2(struct CollectiveArgs* args) {
   const ssize_t loopSize = args->nChannels*(ssize_t)chunkSize;
 
 #ifdef ENABLE_PROFILING
+  /*
   auto devProf = comm->devProf;
   uint64_t clk, t0 = 0ULL, ws, wr;
   if (tid == 0) clk = clock64();
+  */
 #endif
 
   // Compute pointers
@@ -321,6 +313,7 @@ __device__ void ncclAllReduceRingKernel2(struct CollectiveArgs* args) {
 
 //#define USE_PRIMITIVE 1
   int flag = -1;
+
 #if USE_PRIMITIVE
   ncclPrimitives<UNROLL, ALLREDUCE_CHUNKSTEPS/ALLREDUCE_SLICESTEPS, ALLREDUCE_SLICESTEPS, T, 1, 1, FUNC>
     prims(tid, nthreads, &ring->prev, &ring->next, thisOutput, stepSize, channel, comm, args->opCount);
