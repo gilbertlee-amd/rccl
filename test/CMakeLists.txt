@@ -10,13 +10,6 @@ if(BUILD_TESTS)
       message(FATAL_ERROR "chrpath is required for UnitTests. Please install (e.g. sudo apt-get install chrpath)")
   endif()
 
-  # OpenMP is used to drive GPUs (one per thread)
-  if(EXISTS /etc/redhat-release)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp=libgomp -pthread")
-  else()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp -pthread")
-  endif()    
-
   # Download and unpack googletest at configure time
   configure_file(CMakeLists.txt.in googletest-download/CMakeLists.txt)
   execute_process(
@@ -57,7 +50,7 @@ if(BUILD_TESTS)
   )
 
   add_executable(UnitTests ${TEST_SOURCES})
-  target_include_directories(UnitTests PRIVATE /opt/rocm)
+
   target_link_libraries(UnitTests PRIVATE gtest_main PRIVATE rccl)
   install(TARGETS UnitTests RUNTIME DESTINATION test)
 
