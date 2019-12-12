@@ -4,7 +4,6 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 #include "test_AllGather.hpp"
-#include <omp.h>
 
 namespace CorrectnessTests
 {

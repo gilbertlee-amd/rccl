@@ -5,7 +5,6 @@
  ************************************************************************/
 
 #include "test_AllReduce.hpp"
-#include <omp.h>
 
 namespace CorrectnessTests
 {

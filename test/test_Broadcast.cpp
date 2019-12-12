@@ -5,7 +5,6 @@
  ************************************************************************/
 
 #include "test_Broadcast.hpp"
-#include <omp.h>
 
 namespace CorrectnessTests
 {

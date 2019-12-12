@@ -5,7 +5,6 @@
  ************************************************************************/
 
 #include "test_ReduceScatter.hpp"
-#include <omp.h>
 
 namespace CorrectnessTests
 {
