@@ -19,12 +19,14 @@ namespace CorrectnessTests
         ComputeExpectedResults(dataset, op);
 
         // Launch the reduction (1 thread per GPU)
-        #pragma omp parallel for num_threads(numDevices)
+        ncclGroupStart();
         for (int i = 0; i < numDevices; i++)
         {
+            hipSetDevice(i);
             ncclAllReduce(dataset.inputs[i], dataset.outputs[i],
                           numElements, dataType, op, comms[i], streams[i]);
         }
+        ncclGroupEnd();
 
         // Wait for reduction to complete
         Synchronize();

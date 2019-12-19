@@ -36,9 +36,10 @@ namespace CorrectnessTests
         size_t const byteCount = datasets[0].NumBytes() / numDevices;
         size_t const elemCount = numElements / numDevices;
 
-        #pragma omp parallel for num_threads(numDevices)
+        ncclGroupStart();
         for (int i = 0; i < numDevices; i++)
         {
+            hipSetDevice(i);
             ncclAllGather((int8_t *)datasets[0].inputs[i] + (i * byteCount),
                           datasets[0].outputs[i], elemCount,
                           dataType, comms[i], streams[i]);
@@ -61,6 +62,7 @@ namespace CorrectnessTests
                               elemCount, dataType, op,
                               comms[i], streams[i]);
         }
+        ncclGroupEnd();
 
         // Wait for reduction to complete
         Synchronize();
