@@ -1,6 +1,6 @@
 # Copyright (c) 2019-2020 Advanced Micro Devices, Inc. All rights reserved.
 
-cmake_minimum_required(VERSION 2.8.12)
+cmake_minimum_required(VERSION 3.5)
 
 # We use C++14 features, this will add compile option: -std=c++14
 set( CMAKE_CXX_STANDARD 14 )
@@ -68,13 +68,14 @@ rocm_setup_version(VERSION ${VERSION_STRING})
 list(APPEND CMAKE_PREFIX_PATH
             /opt/rocm
             /opt/rocm/hip
+            /opt/rocm/llvm
             /opt/rocm/hcc)
 
 find_package(hip REQUIRED)
 message(STATUS "HIP compiler: ${HIP_COMPILER}")
 message(STATUS "HIP runtime: ${HIP_RUNTIME}")
 
-option(BUILD_SHARED_LIBS "Build as a shared library" ON)
+option(BUILD_SHARED_LIBS "Build as a shared library" OFF)
 
 configure_file(src/nccl.h.in ${PROJECT_BINARY_DIR}/rccl.h)
 configure_file(src/nccl.h.in ${PROJECT_BINARY_DIR}/nccl.h)
