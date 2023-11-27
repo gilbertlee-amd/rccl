@@ -1005,7 +1005,6 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
   struct ncclTasks* tasks = &comm->tasks;
   void *fn = plan->kernelFn;
   cudaStream_t launchStream = tasks->streams->stream;
-
   unsigned numBlocksX = (rcclParamEnablePrefXcc() ? 8 : 1);
   dim3 grid = {numBlocksX, (unsigned)plan->channelCount, 1};
   dim3 block = {(unsigned)plan->threadPerBlock, 1, 1};
