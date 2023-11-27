@@ -44,6 +44,15 @@
   MACRO_IF(nullify, nullptr, NCCL_FUNC_NAME(func, algo, SIMPLE, devredop, type))
 #endif
 
+// Macro for collecting HW_REG_XCC_ID
+#if defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__)
+#define GetXccId(val) \
+  asm volatile ("s_getreg_b32 %0, hwreg(HW_REG_XCC_ID)" : "=s" (val));
+#else
+#define GetXccId(val) \
+  val = 0
+#endif
+
 #define NCCL_FUNC4(func, devredop, type, nullify) \
   NCCL_FUNC5(func, TREE,    devredop, type, nullify), \
   NCCL_FUNC5(func, RING,    devredop, type, nullify), \
@@ -292,7 +301,7 @@ class ncclFunction {
     uint32_t pos = atomicAdd(&ncclShmem.collTraceTail->tail, 1)%COLLTRACE_NUM_ITEMS; \
     struct ncclCollTrace* collTrace = ncclShmem.collTrace+pos; \
     collTrace->timeStamp = wall_clock64(); \
-    collTrace->bid = blockIdx.x;
+    collTrace->bid = blockIdx.y;
     // TODO: switch to atomicInc after llvm crash is fixed
     // uint32_t pos = atomicInc(&ncclShmem.collTraceTail->tail, COLLTRACE_NUM_ITEMS)
 
@@ -474,13 +483,13 @@ __forceinline__ __device__ void ncclKernel(
   case 0:
     if (channelMask & (1ull<<x)) {
       int y = __popcll(channelMask & ((1ull<<x)-1));
-      if (blockIdx.x == y) ncclShmem.channelId = x;
+      if (blockIdx.y == y) ncclShmem.channelId = x;
     }
     if (WARP_SIZE < MAXCHANNELS) {
       x = WARP_SIZE + tid;
       if (channelMask & (1ull<<x)) {
         int y = __popcll(channelMask & ((1ull<<x)-1));
-        if (blockIdx.x == y) ncclShmem.channelId = x;
+        if (blockIdx.y == y) ncclShmem.channelId = x;
       }
     }
     break;
@@ -524,7 +533,7 @@ __forceinline__ __device__ void ncclKernel(
       break;
     case 2:
       dst = &ncclShmem.work;
-      src = workHead + blockIdx.x;
+      src = workHead + blockIdx.y;
       bytes = sizeof(ncclWork);
       static_assert(sizeof(ncclWork) <= 16*WARP_SIZE, "ncclWork cannot be loaded by a single warp in one insn.");
       break;
@@ -544,11 +553,18 @@ __forceinline__ __device__ void ncclKernel(
 #ifdef ENABLE_PROFILING
   if (tid == 0) {
     ncclShmem.prof.count = 0;
-    ncclShmem.prof.seq = ncclShmem.comm.devProf[blockIdx.x].seq;
+    ncclShmem.prof.seq = ncclShmem.comm.devProf[blockIdx.y].seq;
   }
 #endif
   if (tid == 0) __insert_timestamp(__LINE__);
   if (COLLTRACE && tid == 0) traceKernelLaunch(ncclCollTraceKernelLaunchType);
+
+  if (ncclShmem.channel.prefXccId != -1)
+  {
+    int xccId;
+    GetXccId(xccId);
+    if (xccId != ncclShmem.channel.prefXccId) return;
+  }
 
   while (true) {
     // Notify host that all fifo reads are complete.
@@ -599,8 +615,8 @@ __forceinline__ __device__ void ncclKernel(
 #ifdef ENABLE_PROFILING
   if (ncclShmem.comm.devProf->seq < PROFILE_NUM_LAUNCHES) {
     __synclds();
-    copyToShmem16(tid, ncclShmem.comm.devProf+MAXCHANNELS*ncclShmem.prof.seq+blockIdx.x, &ncclShmem.prof, sizeof(struct ncclProf));
-    if (tid == 0) ncclShmem.comm.devProf[blockIdx.x].seq++;
+    copyToShmem16(tid, ncclShmem.comm.devProf+MAXCHANNELS*ncclShmem.prof.seq+blockIdx.y, &ncclShmem.prof, sizeof(struct ncclProf));
+    if (tid == 0) ncclShmem.comm.devProf[blockIdx.y].seq++;
   }
 #endif
 }

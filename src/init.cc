@@ -491,6 +491,23 @@ exit:
   return ret;
 }
 
+RCCL_PARAM(EnablePrefXcc, "ENABLE_PREF_XCC", 0);
+
+int32_t rcclGetPreferredXcc(int src, int dst)
+{
+  if (!rcclParamEnablePrefXcc()) return -1;
+
+  static int32_t table[8][8] = {{0,1,5,6,4,3,7,2},
+                                {1,0,7,5,6,2,4,3},
+                                {6,7,0,1,3,4,2,5},
+                                {5,6,1,0,2,7,3,4},
+                                {4,6,3,2,0,5,1,7},
+                                {3,2,4,7,5,0,6,1},
+                                {7,4,2,3,1,5,0,6},
+                                {2,3,5,4,7,1,6,0}};
+  return table[src][dst];
+}
+
 static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, int ndev, int rank) {
   if (ndev < 1) {
     WARN("invalid device count (%d) requested", ndev);
@@ -637,6 +654,9 @@ static ncclResult_t devCommSetup(ncclComm_t comm) {
   comm->workFifoSent = 0;
   comm->workFifoAckdMin = 0;
 
+
+
+
   for (int c=0; c < MAXCHANNELS; c++) {
     tmpCommAndChans.channels[c].peers = comm->channels[c].devPeers;
     tmpCommAndChans.channels[c].ring = comm->channels[c].ring;
@@ -647,10 +667,16 @@ static ncclResult_t devCommSetup(ncclComm_t comm) {
     tmpCommAndChans.channels[c].binTree = comm->channels[c].binTree;
     tmpCommAndChans.channels[c].nvls = comm->channels[c].nvls;
     tmpCommAndChans.channels[c].workFifoDone = &comm->workFifoDone[c];
-
     if (comm->channels[c].ring.userRanks != nullptr) {
       NCCLCHECKGOTO(ncclCudaMemcpyAsync(tmpCommAndChans.channels[c].ring.userRanks, comm->channels[c].ring.userRanks, nRanks, comm->sharedRes->deviceStream.cudaStream), ret, fail);
     }
+
+    tmpCommAndChans.channels[c].prefXccId = rcclGetPreferredXcc(comm->cudaDev,
+                                                                comm->peerInfo[comm->channels[c].ring.next].cudaDev);
+    INFO(NCCL_INIT, "Channel %d: Preferred XCCID for (%d -> %d) = %d\n",
+         c, comm->cudaDev,
+         comm->peerInfo[comm->channels[c].ring.next].cudaDev,
+         tmpCommAndChans.channels[c].prefXccId);
   }
 
 #ifdef ENABLE_COLLTRACE

@@ -26,5 +26,6 @@ THE SOFTWARE.
 #include "param.h"
 
 RCCL_PARAM_DECLARE(EnableHipGraph);  // Opt-in environment variable for enabling hipGraph
+RCCL_PARAM_DECLARE(EnablePrefXcc);
 
 #endif
