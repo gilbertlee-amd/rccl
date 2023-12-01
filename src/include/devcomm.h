@@ -16,7 +16,6 @@
 #endif
 #include <stdint.h>
 
-
 #define NCCL_NUM_FUNCTIONS 5 // SendRecv and AllToAllPivot not included for now
 typedef enum { ncclFuncBroadcast, ncclFuncReduce, ncclFuncAllGather, ncclFuncReduceScatter, ncclFuncAllReduce, ncclFuncSendRecv, ncclFuncSend, ncclFuncRecv, ncclFuncAllToAllPivot, ncclNumFuncs} ncclFunc_t;
 extern const char* ncclFuncStr[NCCL_NUM_FUNCTIONS+2];
@@ -54,8 +53,16 @@ union ncclLLFifoLine {
   int4 i4;
 };
 
+/* 256-bit channel mask */
+struct rcclChannelMask {
+  uint64_t mask[4];
+};
+#define SETCHANNEL(CHANNEL_MASK, X) ((CHANNEL_MASK).mask[X / 64] |= (1ULL << ((X) % 64)))
+#define GETCHANNEL(CHANNEL_MASK, X) ((CHANNEL_MASK).mask[X / 64] &  (1ULL << ((X) % 64)))
+#define CLEARMASKS(CHANNEL_MASK)    {for (int i = 0; i < 4; i++) CHANNEL_MASK.mask[i] = 0;}
+
 #define WARP_SIZE warpSize
-#define MAXCHANNELS 64
+#define MAXCHANNELS 256
 #define NCCL_MAX_NTHREADS 256
 #define NCCL_SIMPLE_MAX_NTHREADS NCCL_MAX_NTHREADS
 #define NCCL_LL_MAX_NTHREADS NCCL_MAX_NTHREADS

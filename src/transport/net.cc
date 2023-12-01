@@ -457,15 +457,16 @@ static ncclResult_t sharedBuffersInit(struct ncclProxyState* proxyState, int cud
   struct ncclProxySharedP2p* state = type == 0 ? &peer->send : &peer->recv;
   state->refcount++;
   if (state->size == 0) {
-    state->size = nChannels * NCCL_SHARED_STEPS * proxyState->p2pChunkSize;
+    state->size = (int64_t)nChannels * NCCL_SHARED_STEPS * proxyState->p2pChunkSize;
   }
-
+  INFO(NCCL_INIT, "Allocating for nChannels(%d) * sharedSteps(%d) * chunkSize(%d) = %ld", nChannels, NCCL_SHARED_STEPS, proxyState->p2pChunkSize, state->size);
   if (size) *size = state->size;
 
   if (cuda && state->cudaBuff == NULL) {
     if (sameProcess == 0 || ncclCuMemEnable()) {
       NCCLCHECK(ncclP2pAllocateShareableBuffer(state->size, &state->ipcDesc, (void**)&state->cudaBuff));
     } else {
+
       NCCLCHECK(ncclCudaCalloc(&state->cudaBuff, state->size, nullptr, cuda));
     }
   }
