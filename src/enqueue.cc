@@ -253,7 +253,7 @@ static ncclResult_t computeCollAlignCount(struct ncclInfo* collInfo, size_t* ali
   if (collInfo->protocol == NCCL_PROTO_SIMPLE) {
     *alignCount = NCCL_SIMPLE_ALIGNMENT / ncclTypeSize(collInfo->datatype);
   } else if (collInfo->protocol == NCCL_PROTO_LL128) {
-    // LL128 alignCount should be same as LL for now. NCCL_LL128_ALIGNMENT_PER_WARP needs review 
+    // LL128 alignCount should be same as LL for now. NCCL_LL128_ALIGNMENT_PER_WARP needs review
     *alignCount = NCCL_LL_ALIGNMENT_PER_THREAD / ncclTypeSize(collInfo->datatype) * collInfo->nThreads;
   } else {
     *alignCount = NCCL_LL_ALIGNMENT_PER_THREAD / ncclTypeSize(collInfo->datatype) * collInfo->nThreads;
@@ -1380,7 +1380,10 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
   struct ncclTasks* tasks = &comm->tasks;
   void *fn = plan->kernelFn;
   cudaStream_t launchStream = tasks->streams->stream;
-  dim3 grid = {(unsigned)plan->channelCount, 1, 1};
+
+  uint32_t channelMultiplier = (getenv("RCCL_CHANNEL_MULTIPLIER") ? atoi(getenv("RCCL_CHANNEL_MULTIPLIER")) : 1);
+  dim3 grid = {(unsigned)plan->channelCount, channelMultiplier, 1};
+  INFO(NCCL_COLL, "Launching grid size of (%d,%d,1) = %d total threadblocks", grid.x, grid.y, grid.x * grid.y);
   dim3 block = {(unsigned)plan->threadPerBlock, 1, 1};
   size_t smem = ncclShmemDynamicSize(comm->cudaArch);
   void *args[3] = {&comm->devComm, &plan->channelMask, &plan->workHead};
@@ -1892,7 +1895,7 @@ static ncclResult_t hostToDevRedOp(
     int64_t i64;
     uint64_t u64;
     half f16;
-    float f32; 
+    float f32;
     double f64;
 #if defined(RCCL_BFLOAT16)
     hip_bfloat16 bf16;

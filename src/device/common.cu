@@ -18,10 +18,12 @@ struct RunWorkNop {
 };
 
 __launch_bounds__(NCCL_MAX_NTHREADS, 1) __global__ void ncclDevKernel_Generic(struct ncclDevComm* comm, uint64_t channelMask, struct ncclWork* workHead) {
+  if (blockIdx.y != 0) return;
   ncclKernelMain<-1, RunWorkNop, false>(comm, channelMask, workHead);
 }
 #ifdef ENABLE_COLLTRACE
 __launch_bounds__(NCCL_MAX_NTHREADS, 1) __global__ void ncclDevKernelDebug_Generic(struct ncclDevComm* comm, uint64_t channelMask, struct ncclWork* workHead) {
+  if (blockIdx.y != 0) return;
   ncclKernelMain<-1, RunWorkNop, true>(comm, channelMask, workHead);
 }
 #endif
