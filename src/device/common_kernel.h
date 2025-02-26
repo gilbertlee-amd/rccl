@@ -198,7 +198,7 @@ __device__ __forceinline__ void reduceCopy(
   int lane = thread%WARP_SIZE;
   // If a multimem src is present then our biggest pack size is limited to what
   // is supported for this redfn/type.
-  constexpr int BigPackSize = (MultimemSrcs == 0) ? 16 : LoadMultimem_BigPackSize<RedFn>::BigPackSize;
+  constexpr int BigPackSize = (MultimemSrcs == 0) ? 8 : LoadMultimem_BigPackSize<RedFn>::BigPackSize;
 
   if (MaxDsts==0) return;
   if (MinDsts==0 && nDsts==0) return;
