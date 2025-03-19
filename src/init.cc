@@ -94,14 +94,20 @@ static uint64_t hashUniqueId(ncclUniqueId const &id) {
   return h;
 }
 
+RCCL_PARAM(UnrollFactor, "UNROLL_FACTOR", 0);
+
 ncclResult_t commSetUnrollFactor(struct ncclComm* comm) {
   hipDeviceProp_t devProp;
   CUDACHECK(hipGetDeviceProperties(&devProp, comm->cudaDev));
-  if(IsArchMatch(devProp.gcnArchName, "gfx908") || ((IsArchMatch(devProp.gcnArchName, "gfx94") || IsArchMatch(devProp.gcnArchName, "gfx950"))
-    && devProp.multiProcessorCount > 80))
-    comm->unroll = NCCL_UNROLL_2;
+  if (rcclParamUnrollFactor() != 0)
+    comm->unroll = rcclParamUnrollFactor();
+  else if (IsArchMatch(devProp.gcnArchName, "gfx950"))
+    comm->unroll = 1;
+  else if((IsArchMatch(devProp.gcnArchName, "gfx908")) ||
+          (IsArchMatch(devProp.gcnArchName, "gfx94") && devProp.multiProcessorCount > 80))
+    comm->unroll = 2;
   else
-    comm->unroll = NCCL_UNROLL_4;
+    comm->unroll = 4;
   return ncclSuccess;
 }
 
@@ -1559,7 +1565,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   } else {
     NCCLCHECKGOTO(ncclProxyCreate(comm), ret, fail);
   }
-  
+
   timers[TIMER_INIT_CONNECT] = clockNano();
   do { // Build p2p schedule
     int node = comm->node;
@@ -1960,7 +1966,7 @@ static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
 	if (rcclParamMscclppForceEnabled()) {
 		comm->mscclppForceEnable = true;
 	} else {
-		comm->mscclppForceEnable = false;	
+		comm->mscclppForceEnable = false;
 	}
       } else {
         WARN("MSCCL++: Cannot enable MSCCL++ on %s architecture", devProp.gcnArchName);
@@ -2391,7 +2397,7 @@ static ncclResult_t commDestroySync(struct ncclAsyncJob* job_) {
     // And keep polling until all graphs referencing us die.
     while (comm->persistentRefs != 0) {
       NCCLCHECKGOTO(ncclCommPollCallbacks(comm, /*waitSome=*/true), ret, fail);
-    }  
+    }
   }
 
   if ((ret = ncclProxyStop(comm)) != ncclSuccess) {

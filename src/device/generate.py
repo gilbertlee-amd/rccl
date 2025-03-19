@@ -9,7 +9,7 @@ all_redops = ["Sum","Prod","MinMax","PreMulSum","SumPostDiv"]
 all_tys =    ["i8","u8","i32","u32","i64","u64","f16","f32","f64","bf16", "f8", "bf8"]
 all_protos = ["LL","LL128","SIMPLE"]
 all_algos =  ["TREE","RING"]
-all_unroll = ["2", "4"]
+all_unroll = ["1", "2", "4"]
 
 all_params = [all_colls, all_algos, all_protos, all_redops, all_tys, all_unroll]
 
@@ -133,42 +133,6 @@ coll_lower_to_camel = {coll_camel_to_lower[x]: x for x in coll_camel_to_lower}
 
 ################################################################################
 
-def calc_unroll_for_local_arch():
-  if not is_local_arch_only: 
-    return
-
-  rocminfo_path = os.environ.get('ROCM_PATH') + "/bin/rocminfo"
-
-  res = subprocess.run([rocminfo_path], stdout=subprocess.PIPE, universal_newlines=True)
-  rocminfo_output = res.stdout
-  
-  # Parse rocminfo binary output
-  gfx_targets = {}
-  curr_name = None
-  for line in rocminfo_output.splitlines():
-    line = line.strip()
-
-    if line.startswith("Name:"):
-      name = line.split(':')[-1].strip()
-      if "gfx" in name:
-        curr_name = name
-    if line.startswith("Compute Unit:") and curr_name:
-      cu_count = int(line.split(':')[-1].strip())
-      gfx_targets[(curr_name, cu_count)] = None
-      curr_name = None
-  
-  # We want to remove duplicates but cannot use a dictionary since same gfx name can have different cu counts
-  # Use (gfx_name, cu_count) as key for dictionary and convert it to list here
-  gfx_targets = list(gfx_targets.keys())
-
-  # Homogeneous system is required to build for only 1 varient of unroll factor
-  if len(gfx_targets) == 1:
-    gfx_name, cu_count = gfx_targets[0]
-    if "gfx908" == gfx_name or (gfx_name in ["gfx942", "gfx950"] and cu_count > 80):
-      return 2
-    else:
-      return 4
-
 # Helper function to check if the conditions for the collective is being met
 def func_validate(coll, algo, proto, redop, ty):
   if redop == "SumPostDiv" and ty[0] not in ("i","u"):
@@ -191,7 +155,7 @@ def func_filter(function_params, current_idx, item_list=None):
     if current_element == "*":
       if current_idx == 0:
         raise ValueError("Error: Paramter 'COLL' can not be type all '*'.")
-      
+
       # all_params list must be in the same order as function_params --> <coll> <algo> <proto> <redop> <type>
       # Get the current list from all_params
       current_list = all_params[current_idx]
@@ -208,12 +172,12 @@ def func_filter(function_params, current_idx, item_list=None):
       # Check if the current element is recognized
       elements = current_element.split("/")
       current_param = all_params[current_idx]
-      
+
       # Iterate over the elements in the elements list
       for item in elements:
         if item not in current_param:
           raise ValueError(f"Error: {item} is unrecognized or does not belong to this category {current_param}.")
-        
+
       for item in elements:
         item_list.append(item)
         yield from func_filter(function_params, current_idx+1, item_list)
@@ -245,10 +209,6 @@ def parse_input(func_pattern):
 # Maps functions to the chosen representative for the equivalence class it
 # belongs to. For instance (sum, signed int) maps to (sum, unsigned int).
 def equivalent_primary(coll, algo, proto, redop, ty, unroll):
-  # if local arch only, we only need to build for 1 varient of coll_unroll.
-  # map the other varient of coll_unroll to this one.
-  if coll_unroll:
-    unroll = str(coll_unroll)
   if coll in ("AllReduce", "Reduce", "ReduceScatter"):
     # map signed integer sum/prod to unsigned
     if redop in ("Sum","Prod","PreMulSum") and ty[0]=="i":
@@ -272,7 +232,7 @@ def enumerate_func_rows():
 # Sort the hashmap based on custom key <coll> <algo> <proto> <redop> <ty>
 def custom_sort_key(fn):
     coll, algo, proto, redop, ty, unroll = fn
-    
+
     return (
         all_unroll.index(unroll),
         all_colls.index(coll),
@@ -283,8 +243,6 @@ def custom_sort_key(fn):
     )
 
 ################################################################################
-
-coll_unroll = calc_unroll_for_local_arch()
 
 # Corresponds to ncclDevFuncRowToId[]
 func_rows = [fn for fn in enumerate_func_rows()]
@@ -302,6 +260,8 @@ with open(os.path.join(gensrc, "device_table.h"), "w") as f:
   print("-- Generating %s" % os.path.join(gensrc, "device_table.h"))
   out = f.write
 
+  out("#include \"common.h\"\n\n")
+
   if is_ifc: func_declaration = "__device__ void"
   else: func_declaration = "__device__ __attribute__((noinline)) void"
 
@@ -318,78 +278,85 @@ with open(os.path.join(gensrc, "device_table.h"), "w") as f:
   out("\n")
 
   out("typedef void(*ncclDevFuncPtr_t)();\n\n")
-  out("__device__ ncclDevFuncPtr_t const ncclDevFuncTable[] = {\n")
-  index = 0
-  for fn in primary_funcs:
-    coll, algo, proto, redop, ty, unroll = fn
-    if unroll != "2": continue
-    sym = paste("_", "ncclDevFunc", *fn)
-    if fn[2] == "LL128":
-      out("#if defined(__gfx90a__) && defined(ENABLE_LL128)\n")
-      out("/*%4d*/ %s,\n#else\n" % (index, sym))
-      fn_ll = fn[:2] + ("LL",) + fn[3:]
-      sym_ll = paste("_", "ncclDevFunc", *fn_ll)
-      out("/*%4d*/ %s,\n#endif\n" % (index, sym_ll))
-    else:
-      out("/*%4d*/ %s,\n" % (index, sym))
-    index += 1
-  out("nullptr};\n")
-  out("\n")
-  out("__device__ ncclDevFuncPtr_t const ncclDevFuncTable_4[] = {\n")
-  index4 = 0
-  for fn in primary_funcs:
-    coll, algo, proto, redop, ty, unroll = fn
-    if unroll != "4": continue
-    sym = paste("_", "ncclDevFunc", *fn)
-    if fn[2] == "LL128":
-      out("#if defined(__gfx90a__) && defined(ENABLE_LL128)\n")
-      out("/*%4d*/ %s,\n#else\n" % (index4, sym))
-      fn_ll = fn[:2] + ("LL",) + fn[3:]
-      sym_ll = paste("_", "ncclDevFunc", *fn_ll)
-      out("/*%4d*/ %s,\n#endif\n" % (index4, sym_ll))
-    else:
-      out("/*%4d*/ %s,\n" % (index4, sym))
-    index4 += 1
-  out("nullptr};\n")
-  out("\n")
-  
+
+  # Generate function tables per unroll factor
+  tableIdx = 0
+  for curr_unroll in all_unroll:
+    out("__device__ ncclDevFuncPtr_t const ncclDevFuncTable_%s[] = {\n" % curr_unroll)
+    tableIdx = 0
+    for fn in primary_funcs:
+      coll, algo, proto, redop, ty, unroll = fn
+      if curr_unroll != unroll: continue
+      sym = paste("_", "ncclDevFunc", *fn)
+      if fn[2] == "LL128":
+        out("#if defined(__gfx90a__) && defined(ENABLE_LL128)\n")
+        out("/*%4d*/ %s,\n#else\n" % (tableIdx, sym))
+        fn_ll = fn[:2] + ("LL",) + fn[3:]
+        sym_ll = paste("_", "ncclDevFunc", *fn_ll)
+        out("/*%4d*/ %s,\n#endif\n" % (tableIdx, sym_ll))
+      else:
+        out("/*%4d*/ %s,\n" % (tableIdx, sym))
+      tableIdx += 1
+    out("nullptr};\n")
+    out("\n")
+
+  # Construct indirection function workaround
   if not is_ifc:
-    out("template<unsigned short f, unsigned short l>\n"
+    out("template<int unroll, unsigned short f, unsigned short l>\n"
       "struct Caller {\n"
       "  static __forceinline__ __device__ __host__\n"
       "  void call(unsigned short funcIndex) noexcept\n"
       "  {\n"
       "    constexpr unsigned short m = f + (l - f) / 2;\n"
-      "    return (funcIndex < m) ? Caller<f, m>::call(funcIndex) : Caller<m, l>::call(funcIndex);\n"
+      "    return (funcIndex < m) ? Caller<unroll, f, m>::call(funcIndex) : Caller<unroll, m, l>::call(funcIndex);\n"
       "  }\n"
       "};\n"
-      "\n"
-      "template<unsigned short f>\n"
-      "struct Caller<f, f + 1>{\n"
-      "  static __forceinline__ __device__ __host__\n"
-      "  void call(unsigned short funcIndex) noexcept { ncclDevFuncTable[f](); }\n"
-      "};\n")
-    out("__forceinline__ __device__ void NCCL_CALL_FUNCTIONS(unsigned short funcIndex) noexcept {\n")
-    out(f"  Caller<0, {index}>::call(funcIndex);\n")
-    out("}\n\n")
-    out("template<unsigned short f, unsigned short l>\n"
-      "struct Caller4 {\n"
-      "  static __forceinline__ __device__ __host__\n"
-      "  void call4(unsigned short funcIndex) noexcept\n"
-      "  {\n"
-      "    constexpr unsigned short m = f + (l - f) / 2;\n"
-      "    return (funcIndex < m) ? Caller4<f, m>::call4(funcIndex) : Caller4<m, l>::call4(funcIndex);\n"
-      "  }\n"
-      "};\n"
-      "\n"
-      "template<unsigned short f>\n"
-      "struct Caller4<f, f + 1>{\n"
-      "  static __forceinline__ __device__ __host__\n"
-      "  void call4(unsigned short funcIndex) noexcept { ncclDevFuncTable_4[f](); }\n"
-      "};\n")
-    out("__forceinline__ __device__ void NCCL_CALL_FUNCTIONS_4(unsigned short funcIndex) noexcept {\n")
-    out(f"  Caller4<0, {index4}>::call4(funcIndex);\n")
-    out("}\n\n")
+      "\n")
+
+    for curr_unroll in all_unroll:
+      out("template<unsigned short f>\n")
+      out("struct Caller<%s, f, f + 1>{\n" % curr_unroll)
+      out("  static __forceinline__ __device__ __host__\n");
+      out("  void call(unsigned short funcIndex) noexcept { ncclDevFuncTable_%s[f](); }\n" % curr_unroll)
+      out("};\n")
+
+  # Create NCCL_CALL_FUNCTION helper function that will call the appropriate device function
+  out("template <int unroll>\n"
+      "__forceinline__ __device__ void NCCL_CALL_FUNCTIONS(unsigned short funcIndex) noexcept {\n")
+  if is_ifc:
+    for curr_unroll in all_unroll:
+      out("  if (unroll == %s) { ncclDevFuncTable_%s[funcIndex]();\n" % (curr_unroll, curr_unroll))
+  else:
+    out(f"  Caller<unroll, 0, {tableIdx}>::call(funcIndex);\n")
+  out("}\n\n")
+
+  # Create RCCL
+  out("template<int SpecializedFnId, typename SpecializedRunWorkBatch, bool COLLTRACE, int COLL_UNROLL>\n");
+  out("__device__ __forceinline__ void ncclKernelMain(struct ncclDevKernelArgs const* args);\n\n");
+
+  out("struct RunWorkNop {\n");
+  out("  __device__ void run() {}\n");
+  out("};\n\n");
+
+  out("template <int UNROLL, bool COLLTRACE>\n"
+      "__launch_bounds__(NCCL_MAX_NTHREADS, 1) __global__ void rcclGenericKernel(ncclDevKernelArgs4K const args4K) {\n"
+      "  ncclKernelMain<-1, RunWorkNop, COLLTRACE, UNROLL>(&args4K.args);\n"
+      "}\n\n")
+
+  out("struct rcclKernelItem {\n");
+  out("  void* funcPtr;\n");
+  out("  int   unroll;\n");
+  out("};\n\n");
+
+  out("/* This table contains all the __global__ functions that were compiled */\n");
+  out("static struct rcclKernelItem rcclKernelTable[] = {\n")
+  for unroll in all_unroll:
+    out("  {(void*)&(rcclGenericKernel<%s, false>), %s},\n" % (unroll, unroll))
+  out("#ifdef ENABLE_COLLTRACE\n")
+  for unroll in all_unroll:
+    out("  {(void*)&(rcclGenericKernel<%s, true>), %s},\n" % (unroll, unroll))
+  out("#endif\n");
+  out("};\n\n");
 
 # Generate <gensrc>/device_table.cpp
 if is_colltrace:
@@ -399,7 +366,7 @@ if is_colltrace:
     out = f.write
     out('#include "nccl_common.h"\n#include "device.h"\n')
     out("\n")
-    
+
     seen_fns = set()
     out("const char* funcNames[FUNC_INDEX_TOTAL] = {\n")
     for fn in primary_funcs:

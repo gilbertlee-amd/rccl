@@ -19,6 +19,8 @@ Full documentation for RCCL is available at [https://rccl.readthedocs.io](https:
   environment variable `RCCL_DISABLE_RAIL_TREES=1`.
 * Additional debug information about how the trees are built can be logged to the GRAPH logging subsys by setting
   `RCCL_OUTPUT_TREES=1`.
+* Adding ability to choose unroll factor at runtime via RCCL_UNROLL_FACTOR.  This can be set to 1, 2 or 4.  This change currently
+  increases compilation and linking time due to triple the number of kernels generated
 
 ## RCCL 2.21.5 for ROCm 6.3.1
 
